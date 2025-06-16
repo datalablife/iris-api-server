@@ -1,0 +1,162 @@
+version: '3.8'
+
+services:
+  # AutoGen Test Suite
+  autogen-test-suite:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: testing
+    container_name: autogen-test-suite
+    environment:
+      - ENVIRONMENT=testing
+      - PYTHONPATH=/app
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - .:/app
+      - ./test-results:/app/test-results
+      - ./coverage:/app/coverage
+    networks:
+      - autogen-test-network
+    depends_on:
+      - redis-test
+    command: >
+      sh -c "
+        echo 'Running AutoGen Test Suite...' &&
+        python -m pytest tests/autogen/ -v --html=test-results/autogen-report.html --cov=autogen_workflow --cov-report=html:coverage/autogen &&
+        echo 'Running Gemini API Tests...' &&
+        python tests/gemini/api/simple_gemini_test.py &&
+        echo 'Running Client Tests...' &&
+        python tests/gemini/clients/test_model_info.py &&
+        echo 'All tests completed!'
+      "
+
+  # Gemini API Test Service
+  gemini-api-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: testing
+    container_name: gemini-api-test
+    environment:
+      - ENVIRONMENT=testing
+      - PYTHONPATH=/app
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - .:/app
+      - ./test-results:/app/test-results
+    networks:
+      - autogen-test-network
+    command: >
+      sh -c "
+        echo 'Testing Gemini API connectivity...' &&
+        python tests/gemini/api/simple_gemini_test.py &&
+        echo 'Testing Gemini models...' &&
+        python tests/gemini/models/test_gemini_models.py &&
+        echo 'Gemini tests completed!'
+      "
+    profiles:
+      - gemini-tests
+
+  # Shell Script Test Service
+  shell-test:
+    image: alpine:latest
+    container_name: autogen-shell-test
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - ./tests/scripts:/scripts
+      - ./test-results:/results
+    networks:
+      - autogen-test-network
+    command: >
+      sh -c "
+        apk add --no-cache curl jq &&
+        echo 'Running shell script tests...' &&
+        cd /scripts/curl &&
+        chmod +x *.sh &&
+        ./simple_model_test.sh > /results/shell-test-results.txt 2>&1 &&
+        echo 'Shell tests completed!'
+      "
+    profiles:
+      - shell-tests
+
+  # Performance Test Service
+  performance-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: testing
+    container_name: autogen-performance-test
+    environment:
+      - ENVIRONMENT=testing
+      - PYTHONPATH=/app
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - .:/app
+      - ./test-results:/app/test-results
+    networks:
+      - autogen-test-network
+    depends_on:
+      - redis-test
+    command: >
+      sh -c "
+        echo 'Running performance tests...' &&
+        python -m pytest tests/ -v -m 'performance' --html=test-results/performance-report.html &&
+        echo 'Performance tests completed!'
+      "
+    profiles:
+      - performance-tests
+
+  # Integration Test Service
+  integration-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: testing
+    container_name: autogen-integration-test
+    environment:
+      - ENVIRONMENT=testing
+      - PYTHONPATH=/app
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - .:/app
+      - ./test-results:/app/test-results
+    networks:
+      - autogen-test-network
+    depends_on:
+      - redis-test
+      - postgres-test
+    command: >
+      sh -c "
+        echo 'Running integration tests...' &&
+        python -m pytest tests/ -v -m 'integration' --html=test-results/integration-report.html &&
+        echo 'Integration tests completed!'
+      "
+    profiles:
+      - integration-tests
+
+  # Test Redis
+  redis-test:
+    image: redis:7-alpine
+    container_name: autogen-redis-test
+    networks:
+      - autogen-test-network
+    command: redis-server --appendonly yes
+
+  # Test Database
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: autogen-postgres-test
+    environment:
+      POSTGRES_DB: autogen_test_db
+      POSTGRES_USER: autogen_test_user
+      POSTGRES_PASSWORD: autogen_test_password
+    networks:
+      - autogen-test-network
+    profiles:
+      - integration-tests
+
+networks:
+  autogen-test-network:
+    driver: bridge

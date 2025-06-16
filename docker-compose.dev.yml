@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # Development AutoGen Application
+  autogen-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: autogen-dev
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    volumes:
+      # Mount source code for live development
+      - .:/app
+      - ./logs:/app/logs
+      - ./output:/app/output
+      - ./data:/app/data
+      # Mount tests for development
+      - ./tests:/app/tests
+    ports:
+      - "8000:8000"
+      - "8888:8888"  # Jupyter notebook
+    networks:
+      - autogen-dev-network
+    depends_on:
+      - redis-dev
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+  # Development Redis
+  redis-dev:
+    image: redis:7-alpine
+    container_name: autogen-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6380:6379"  # Different port for dev
+    volumes:
+      - redis-dev-data:/data
+    networks:
+      - autogen-dev-network
+    command: redis-server --appendonly yes
+
+  # Test runner service
+  autogen-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: testing
+    container_name: autogen-test
+    environment:
+      - ENVIRONMENT=testing
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - ./test-results:/app/test-results
+      - ./coverage:/app/coverage
+    networks:
+      - autogen-dev-network
+    depends_on:
+      - redis-dev
+    profiles:
+      - testing
+
+  # Jupyter notebook for development
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: autogen-jupyter
+    environment:
+      - ENVIRONMENT=development
+      - PYTHONPATH=/app
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - ./notebooks:/app/notebooks
+    ports:
+      - "8889:8888"
+    networks:
+      - autogen-dev-network
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
+    profiles:
+      - jupyter
+
+  # Database for development (optional)
+  postgres-dev:
+    image: postgres:15-alpine
+    container_name: autogen-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: autogen_dev_db
+      POSTGRES_USER: autogen_dev_user
+      POSTGRES_PASSWORD: autogen_dev_password
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"  # Different port for dev
+    networks:
+      - autogen-dev-network
+    profiles:
+      - database
+
+volumes:
+  redis-dev-data:
+  postgres-dev-data:
+
+networks:
+  autogen-dev-network:
+    driver: bridge
